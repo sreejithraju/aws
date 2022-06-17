@@ -39,7 +39,7 @@ def check_start_stop_schedule(AutoShutdownSchedule):
     schedule = schedules_today[0]
     stop_time = schedule.split(':')[1]
     start_time = schedule.split(':')[2]
-    print(f"....Scheduled Start :{start_time}'o clock , Scheduld Stop : {stop_time}'o clock , Now : {hour_now}'o clock.")
+    print(f"....Scheduled Start :{start_time}'o clock , Scheduled Stop : {stop_time}'o clock , Now : {hour_now}'o clock.")
     
     if stop_time == 24 and start_time == 24:
         print("....Start time and stop time is 24 : Skip the operation")
@@ -116,7 +116,7 @@ def startstop_instances():
                     if state == 'running':
                         print("....Action : No action performed . The server is already in running state")
                     elif state == 'stopped' :
-                        print("....Action : This instace is scheduled to START in few mins")
+                        print("....Action : This instance is scheduled to START in few mins")
                         start_instances.append({'name' : vmname ,'id' : instance["InstanceId"], 'original_state' : state, 'desired_state' : 'running'}) 
                     else :
                         print(f"....Action : No action performed . Current state = {state} (state should be 'stopped' to perform stop operation) ")
@@ -126,7 +126,7 @@ def startstop_instances():
                     if state == 'stopped':
                         print("....Action : No action performed . The server is already in stopped state")
                     elif state == 'running':
-                        print("....Action : This instace is scheduled to STOP in few mins")
+                        print("....Action : This instance is scheduled to STOP in few mins")
                         stop_instances.append({'name' : vmname ,'id' : instance["InstanceId"], 'original_state' : state, 'desired_state' : 'stopped'})  
                     else:
                         print(f"....Action : No action performed . Current state = {state} (state should be 'running' to perform stop operation). ")
