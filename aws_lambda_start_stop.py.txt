@@ -23,7 +23,7 @@ def check_start_stop_schedule(AutoShutdownSchedule):
     hour_now = int(utcnow.strftime("%H"))
     minutes_now = utcnow.strftime("%M")
     date_now = datetime(utcnow.year,utcnow.month,utcnow.day,int(hour_now),int(minutes_now) )
-    print(f"....Current London time  : {date_now} , {weekday_now} ,{hour_now}'o clock")
+    print(f"....Current London time  : {date_now}-{weekday_now}-{hour_now}'o clock")
     
     #check AutoShutdownSchedule
     schedules = AutoShutdownSchedule.split(',')
@@ -171,54 +171,6 @@ def startstop_instances():
         for x in start_result:
             print(x)
         print('..')
-
-    if start_instances:
-        #waiting for started servers 
-        print('..')
-        print("\nWaiting for servers to be staterd")
-        print('=================================\n')
-        waitfor_status(start_instance_ids,"running",5)
-        print('..')
-   
-  
-    if stop_instances:
-        print('..')      
-        #waiting for stopped servers 
-        print("\nWaiting for servers to be stopped")
-        print('=================================\n')
-        waitfor_status(stop_instance_ids,"stopped",5)
-        print('..')
- 
-        
-                
-#print(get_scheduled_instance_ids())                   
-def waitfor_status(instane_ids,final_status,timeout_mins):
-    loop = True
-    count = 0
-    interval = 10
-    while loop:
-   
-        
-        
-        loop = False
-        out = []
-        response = ec2.describe_instances(InstanceIds=instane_ids)
-        for r in response['Reservations']:
-            for i in r['Instances']:
-                vmname = list(filter(lambda x: x['Key'] == 'Name' , i['Tags']))[0]['Value']
-                state = i['State']["Name"]
-                id = i['InstanceId']
-                out.append(f"{vmname}  : Final State : {state} : {id}")
-                if state != final_status: loop = True
-        
-        count += 1
-        mins = interval * count / 60
-        
-        if mins > timeout_mins: break
-        time.sleep(interval)
-    for x in out:
-        print(x)
-    print(f"Time taken : {round(mins,1)} mins")
 
 
 
