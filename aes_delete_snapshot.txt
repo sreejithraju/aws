@@ -7,6 +7,7 @@ import json
 
 def lambda_handler(event, context):
     snap_del_days = 15 # snapshot will be deleted after 15 days
+    max_executions =200 # Do the task only on these number of servers
     AWS_REGION = "us-east-1"
     ec2_resource = boto3.resource('ec2', region_name=AWS_REGION)
     client = boto3.client('ec2',region_name=AWS_REGION)
@@ -14,46 +15,71 @@ def lambda_handler(event, context):
     CURRENT_ACCOUNT_ID = STS_CLIENT.get_caller_identity()['Account']
     snapshots = client.describe_snapshots(OwnerIds=[CURRENT_ACCOUNT_ID])
     total_snapshots = len(snapshots['Snapshots'])
-    print (f"Total Snapshots found = {total_snapshots} : Current Account ID :{CURRENT_ACCOUNT_ID} : Region: {AWS_REGION}")
     delete_date = datetime.now() + relativedelta(days=snap_del_days)
-
+    
+    print(f"Snapshot Retension duration is {snap_del_days} days")
+    print(f"Max Snapshot deletions in this execution is set to {max_executions} ")
+    print (f"Total Snapshots found = {total_snapshots} : Current Account ID :{CURRENT_ACCOUNT_ID} : Region: {AWS_REGION}")
+    
+    
+    snapshots_to_tag = []
+    snapshots_to_delete = []
+    
     for snapshot in snapshots['Snapshots']:
         
-        #print(f"ID : {snapshot['SnapshotId']} ")
         if not 'Tags' in snapshot:
-            print(f"ID : {snapshot['SnapshotId']} - Tag[Delete_Snapshot] is not found . Creating it : Value = {delete_date.strftime('%d/%m/%Y')} ")
-            client.create_tags(Resources=[snapshot['SnapshotId'],],Tags=[{'Key':'Delete_Snapshot', 'Value': delete_date.strftime('%d/%m/%Y')}])
+            snapshots_to_tag.append(snapshot['SnapshotId'])
         else:
             # Find Tag named 'Delete_Snapshot'
             pattern = re.compile('^Delete_Snapshot$',re.IGNORECASE)
             deleteSnapTag = [ s for s in snapshot['Tags'] if pattern.match(s['Key']) ]
             if len(deleteSnapTag) == 0 : # if 'Delete_Snapshot' Tag is not found, creating the same
-                print(f"ID : {snapshot['SnapshotId']} - Tag[Delete_Snapshot] is not found . Creating it : Value = {delete_date.strftime('%d/%m/%Y')} ")
-                client.create_tags(Resources=[snapshot['SnapshotId'],],Tags=[{'Key':'Delete_Snapshot', 'Value': delete_date.strftime('%d/%m/%Y')}])
-            
+                snapshots_to_tag.append(snapshot['SnapshotId'])
             else:
                 delete_schedule = deleteSnapTag[0]['Value'] # get the date from the 'Delete_Snapshot' Tag
                 delete_date = datetime.strptime(delete_schedule, '%d/%m/%Y').date() 
                 date_now = datetime.now().date()
                 days_remaining = (delete_date - date_now).days
-                if days_remaining < 0 : 
-                    del_msg = f"Time Limit exceeded by {abs(days_remaining)} days. Going to delete now"
-                elif days_remaining == 0:
-                    del_msg =f"Today is the deletion date. Going to deleted now"
-                else:
-                    del_msg = f"Will be deleted in {days_remaining} days"
-                print(f"ID : {snapshot['SnapshotId']} - Snapshot Deletion date : {delete_date} ; Date now : {date_now} ; {del_msg}")
+                if days_remaining <= 0 :
+                    snapshots_to_delete.append(snapshot)
+                    
+    
+    print(f"Snapshots to be tagged = {len(snapshots_to_tag)} ")
+    print(f"Snapshots to be deleted = {len(snapshots_to_delete)}")
+    
+    
+    if len(snapshots_to_tag) > 0 :
+        print("..")
+        # Limiting number of snapshots to tag 
+        snapshots_to_tag_sliced = snapshots_to_tag[0:max_executions]
+        print(f"Max snapshots to be tagged in this execution : {len(snapshots_to_tag_sliced)}")
+        print(f"Appends Tag 'Delete_Snapshot' = {delete_date.strftime('%d/%m/%Y')}  to the following snapshots")
+        for x in snapshots_to_tag_sliced:
+            print(x)
+        client.create_tags(Resources=snapshots_to_tag_sliced,Tags=[{'Key':'Delete_Snapshot', 'Value': delete_date.strftime('%d/%m/%Y')}])
+        print("..")
+    
+    
+        
+    if len(snapshots_to_delete) > 0 :
+        print("..")
+        # Limiting number of snapshots to delete
+        
+        snapshots_to_delete_sliced = snapshots_to_delete[0:max_executions]
+        print(f"Max snapshots to be deleted in this execution : {len(snapshots_to_delete_sliced)}")
+        print("The following snapshots is going to be deleted")
+        for snapshot in snapshots_to_delete_sliced:
+            try:
                 
-                try:
-                    if days_remaining <= 0 :
-                        started = snapshot['StartTime']
-                        print('...Deleting below Snapshot')
-                        print ("...Snapshot ID :" + snapshot['SnapshotId'] + " Created on : "+ str(started) + " from Volume : " + snapshot['VolumeId'] + " with state : " + snapshot['State'])
-                        client.delete_snapshot(SnapshotId=snapshot['SnapshotId'])
-                        
-                except ClientError as e:
-                    if e.response['Error']['Code'] == 'InvalidSnapshot.InUse':
-                        print (e.response['Error']['Code'] + ": " + e.response['Error']['Message'])
-                    else:
-                        print("Unexpected error: %s" % e)
-           
+                started = snapshot['StartTime']
+                print ("...Snapshot ID :" + snapshot['SnapshotId'] + " Created on : "+ str(started) + " from Volume : " + snapshot['VolumeId'] + " with state : " + snapshot['State'])
+                client.delete_snapshot(SnapshotId=snapshot['SnapshotId'])
+                    
+            except ClientError as e:
+                if e.response['Error']['Code'] == 'InvalidSnapshot.InUse':
+                    print (e.response['Error']['Code'] + ": " + e.response['Error']['Message'])
+                else:
+                    print("Unexpected error: %s" % e)
+       
+       
+       
