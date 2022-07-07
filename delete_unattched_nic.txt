@@ -1,0 +1,148 @@
+'''
+   Script to delete unattched NIC which crossedd the threshold settings
+   This script does below tasks
+   1) Create Tag Delete_NIC with Deletion date for all unattched NICs
+   2) If an unattched NIC contains Delete_NIC tag, and the date in the tag older than today (or today) , The NIC will be deleted
+   3) If an attched NIC contain Tag, the tag will be deleted (if not , as soon as NIC is detached, this script will delete the VM if the date in the Tag is older)
+   
+
+'''
+script_name = "Delete Unattched NICs"
+script_version = '1.0.0'
+script_date = '07-07-2022'
+retension_days = 15
+aws_region = "us-east-1"
+tag_name = ["Delete_NIC","delete_NIC","Delete_nic","delete_nic", "DELETE_NIC", "Delete_Nic"]
+
+
+import json , boto3 , re , sys
+from datetime import datetime, timezone
+from dateutil.relativedelta import relativedelta
+from botocore.exceptions import ClientError
+
+
+
+def find_tag(resource):
+    if not "TagSet" in resource:
+        return None
+    pattern = re.compile(f'^{tag_name[0]}$',re.IGNORECASE)
+    tags = [ s for s in resource['TagSet'] if pattern.match(s['Key']) ]
+    if len(tags) == 0 :
+        return None
+    return tags[0]['Value']
+def print_info(nics):
+    for nic in nics:
+        if "TagSet" in nic:
+            tags = nic['TagSet']
+        else:
+            tags = []
+        print(f"ID:{nic['NetworkInterfaceId']} , TagSet : {tags}")
+
+def lambda_handler(event, context):
+        ec2 = boto3.client('ec2',region_name=aws_region)
+        sts = boto3.client('sts')
+        account_id =sts.get_caller_identity()['Account']
+        print('-------------------------------------------------------------------------------------------------')
+        print(f"Script : {script_name} : Ver : {script_version} : Script Date : {script_date} : Retention {retension_days} days" )
+        print(f"AWS Region : {aws_region}  , Account : {account_id}")
+        print('-------------------------------------------------------------------------------------------------')
+        print('Date Today :', datetime.now().date().strftime('%d/%m/%Y'))
+        print('')
+        attached_nics_with_tag = ec2.describe_network_interfaces(Filters=[{'Name': 'status','Values': [ 'in-use',]},{'Name': 'tag-key','Values': tag_name }])['NetworkInterfaces']
+        detached_nics = ec2.describe_network_interfaces(Filters=[{'Name': 'status','Values': [ 'available',]}])['NetworkInterfaces']
+        detached_nics_with_tag = []
+        detached_nics_without_tag = []
+        detached_nics_expired = []
+        for nic in detached_nics:
+            if find_tag(nic):
+                detached_nics_with_tag.append(nic)
+                delete_schedule = find_tag(nic) # get the date from the 'Delete_Snapshot' Tag
+                delete_date = datetime.strptime(delete_schedule, '%d/%m/%Y').date() 
+                date_now = datetime.now().date()
+                days_remaining = (delete_date - date_now).days
+                if days_remaining <= 0 :
+                    detached_nics_expired.append(nic)
+            else:
+                detached_nics_without_tag.append(nic)
+                
+        print("NIC Details :")
+        print(f"...Detached.............= {len(detached_nics)}")
+        print(f"...Detached With Tag....= {len(detached_nics_with_tag)}")
+        print(f"...Expired..............= {len(detached_nics_expired)}")
+        print(f"...Detached WithOut Tag.= {len(detached_nics_without_tag)}")
+        print(f"...Attached With Tag....= {len(attached_nics_with_tag)}")
+        print('-----------------------------')
+        
+        deleted=0
+        tagged=0
+        untagged=0
+        errorcount = 0
+        
+        #Removing Tag from Attched NICs
+        if len(attached_nics_with_tag) > 0:
+            print("Removing Tag From Following 'Attached' NICs")
+            ids_to_remove_tag = list(map(lambda x: x['NetworkInterfaceId'], attached_nics_with_tag))
+            i=0
+            for id in ids_to_remove_tag:
+                i+=1
+                print(f"{i}/{len(ids_to_remove_tag)}) {id}")
+            try:
+                ec2.delete_tags(Resources=ids_to_remove_tag,Tags=[{'Key':tag_name[0]  }])
+                msg = 'Success'
+                untagged = len(attached_nics_with_tag)
+            except:
+                errorcoun+=1
+                msg = "Error: " +  sys.exc_info()[0]
+                
+            print(f"Result : {msg}")
+            print('------------------------------------------------')
+            print('--')
+            
+        #Deleting Expired Unattached NICs
+        if len(detached_nics_expired) > 0:
+            print("Deleting Expired Unattached NICs")
+            
+            i=0
+            for nic in detached_nics_expired:
+                i+=1
+                try:
+                    ec2.delete_network_interface(NetworkInterfaceId=nic['NetworkInterfaceId'])
+                    msg = 'Deleted'
+                    deleted+=1
+                except:
+                    msg = "Error: " +  sys.exc_info()[0]
+                    errorcount+=1
+                    
+                print(f"{i}/{len(detached_nics_expired)}) {nic['NetworkInterfaceId']} : {msg} , DateFormTag={find_tag(nic)}")
+            print('------------------------------------------------')
+            print('--') 
+        
+        #Adding Tag to Unattached NICs
+        if len(detached_nics_without_tag) > 0:
+            print("Creating Tag for below NICs")
+            
+            delete_date = datetime.now() + relativedelta(days=retension_days)
+            delete_date_formatted = delete_date.strftime('%d/%m/%Y')
+            ids_to_add_tag = list(map(lambda x: x['NetworkInterfaceId'], detached_nics_without_tag))
+            i=0
+            for id in ids_to_add_tag:
+                i+=1
+                print(f"{i}/{len(ids_to_add_tag)}) {id} , TAG={delete_date_formatted}")
+            delete_date = datetime.now() + relativedelta(days=retension_days)
+            try:
+                ec2.create_tags(Resources=ids_to_add_tag,Tags=[{'Key':tag_name[0] , 'Value': delete_date_formatted }])
+                msg = 'Success'
+                tagged = len(detached_nics_without_tag)
+            except:
+                msg = "Error: " +  sys.exc_info()[0]
+                errorcount+=1
+            print(f"Result : {msg}")
+            print('------------------------------------------------')
+            print('--')  
+
+        print('-----------------Final Result-------------------')
+        print(f"Deleted={deleted} ,Errors={errorcount} Tagged={tagged}, UnTagged={untagged}")
+        print('---------------------End-----------------------')
+      
+  
+        
